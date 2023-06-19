@@ -7,6 +7,7 @@
       apt:
         name:
           - sudo
+          - snapd
 
     - name: Create misc groups
       group:
@@ -90,3 +91,15 @@
         owner: root
         group: root
         mode: '0644'
+
+    - name: Install certbot
+      community.general.snap:
+        name: certbot
+        classic: yes
+
+    - name: "weekly certificate renewal"
+      cron:
+        user: root
+        name: "weekly certificate renewal"
+        job: "/snap/bin/certbot renew"
+        special_time: weekly
