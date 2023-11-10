@@ -19,7 +19,7 @@
 
     - name: Download employees file
       get_url:
-        url: https://gitlab.com/telescoop-public/devops/company-settings/-/raw/main/employees.yaml
+        url: https://raw.githubusercontent.com/TelesCoop/company-settings/main/employees.yaml?token=GHSAT0AAAAAACIRDOZLNNGHZHWAQ2V6O2SAZKOCLPQ
         dest: ./employees.yaml
         force: yes # file might have been updated
       delegate_to: localhost
@@ -50,9 +50,9 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Fill authorized keys for ubuntu
+    - name: Fill authorized keys for devops
       authorized_key:
-        user: ubuntu
+        user: "{{ os }}"
         state: present
         key: "{{ item.ssh_key }}"
         comment: "{{ item.name }}"
