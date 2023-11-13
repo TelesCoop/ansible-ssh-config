@@ -1,1 +1,5 @@
 os: ubuntu
+sshd:
+  port: 42722
+
+support_mail_addr: contact@telescoop.fr
