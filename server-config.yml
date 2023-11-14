@@ -2,13 +2,17 @@
 
 - hosts: all
   remote_user: root
+  handlers:
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted
+    - name: restart systemd-timesyncd
+      systemd:
+        name: systemd-timesyncd
+        state: restarted
+        enabled: true
   tasks:
-    - name: Install sudo
-      apt:
-        name:
-          - sudo
-          - snapd
-
     - name: Create misc groups
       group:
         name: "{{ item }}"
@@ -50,9 +54,9 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Fill authorized keys for devops
+    - name: Fill authorized keys for {{ ansible_user }}
       authorized_key:
-        user: "{{ os }}"
+        user: "{{ ansible_user }}"
         state: present
         key: "{{ item.ssh_key }}"
         comment: "{{ item.name }}"
@@ -61,7 +65,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Fill authorized keys for os
+    - name: Fill authorized keys for users
       authorized_key:
         user: "{{ item.name }}"
         state: present
@@ -108,7 +112,7 @@
       apt:
         name:
           # Infra
-          - sudo
+          # - sudo
           - iptables
           - iptables-persistent
           - fail2ban
@@ -133,6 +137,7 @@
           - bash-completion
           - tree
           - atool
+      when: inventory_hostname not in groups['vps03']
 
     - name: Copy sshd default config
       template:
@@ -143,6 +148,7 @@
         mode: 0644
         validate: /usr/sbin/sshd -t -f %s
       notify: restart sshd
+      when: inventory_hostname not in groups['vps03']
 
     - name: Remove ntp package
       apt:
