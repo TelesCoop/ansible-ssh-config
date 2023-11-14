@@ -17,12 +17,12 @@
         - devops
         - ssh-allowed
 
-#    - name: Download employees file
-#      get_url:
-#        url: https://raw.githubusercontent.com/TelesCoop/company-settings/main/employees.yaml?token=GHSAT0AAAAAACIRDOZLNNGHZHWAQ2V6O2SAZKOCLPQ
-#        dest: ./employees.yaml
-#        force: yes # file might have been updated
-#      delegate_to: localhost
+    - name: Download employees file
+      get_url:
+        url: https://raw.githubusercontent.com/TelesCoop/company-settings/main/employees.yaml
+        dest: ./employees.yaml
+        force: true  # file might have been updated
+      delegate_to: localhost
 
     - name: Define employees variable from file
       include_vars:
@@ -95,7 +95,7 @@
     - name: Install certbot
       community.general.snap:
         name: certbot
-        classic: yes
+        classic: true
 
     - name: "weekly certificate renewal"
       cron:
@@ -232,29 +232,13 @@
     #     job: /usr/share/mdadm/checkarray --all
     #     special_time: weekly
 
-    - name: "Set mdadm mail address"
+    - name: Set mdadm mail address
       lineinfile:
         dest: /etc/mdadm/mdadm.conf
         regexp: "^MAILADDR"
         line: "MAILADDR {{ support_mail_addr }}"
 
-    - name: "Start daemon"
-      lineinfile:
-        dest: /etc/default/smartmontools
-        regexp: "start_smartd="
-        line: "start_smartd=yes"
-      notify: restart smartmontools
-
-    - name: "Copy smartd config"
-      template:
-        src: "smartd.conf.j2"
-        dest: /etc/smartd.conf
-        owner: root
-        group: root
-        mode: '0644'
-      notify: restart smartmontools
-
-    - name: "Configure unattended-upgrade"
+    - name: Configure unattended-upgrade
       template:
         src: "{{ item }}.j2"
         dest: "/etc/apt/apt.conf.d/{{ item }}"
@@ -263,12 +247,31 @@
         mode: '0644'
       loop:
         - 20auto-upgrades
-#        - 50unattended-upgrades
+        - 50unattended-upgrades
 
-    - name: "Configure logrotate - nginx"
+    - name: Configure logrotate - nginx
       template:
         src: logrotate-nginx.j2
         dest: /etc/logrotate.d/nginx
         owner: root
         group: root
         mode: '0644'
+
+    - name: Restart when required for upgrades on monday
+      ansible.builtin.cron:
+        name: restart when required for upgrades
+        weekday: "1"  # monday
+        minute: "0"
+        hour: "6"
+        user: root
+        job: "[ -f /var/run/reboot-required ] && reboot"
+
+- name: Deploy Mailgun SMTP configuration
+  hosts: all
+  vars:
+    - mailgun_username: postmaster@mail.telescoop.fr
+    - mailgun_password: "{{ mailgun_smtp_password }}"
+    - root_forward: "{{ support_mail_addr }}"
+    - mailgun_smtp: smtp.eu.mailgun.org
+  roles:
+    - ansible-mailgun

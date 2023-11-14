@@ -8,4 +8,4 @@ vps01.tlscp.fr:42722 ansible_user=ubuntu
 vps02.tlscp.fr:42722 ansible_user=ubuntu
 
 [vps03]
-vps03.tlscp.fr ansible_user=debian
+vps03.tlscp.fr ansible_user=telescoop
