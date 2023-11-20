@@ -1,0 +1,283 @@
+---
+
+- hosts: all
+  remote_user: root
+  handlers:
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted
+    - name: restart systemd-timesyncd
+      systemd:
+        name: systemd-timesyncd
+        state: restarted
+        enabled: true
+  tasks:
+    - name: Create misc groups
+      group:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - devops
+        - ssh-allowed
+
+    - name: Download employees file
+      get_url:
+        url: https://raw.githubusercontent.com/TelesCoop/company-settings/main/employees.yaml
+        dest: ./employees.yaml
+        force: true  # file might have been updated
+      delegate_to: localhost
+
+    - name: Define employees variable from file
+      include_vars:
+        file: employees.yaml
+        name: employees
+
+    - name: Create users
+      user:
+        name: "{{ item.name }}"
+        group: devops
+        groups: sudo,ssh-allowed
+        append: true
+      loop: "{{ employees.employees }}"
+      when: not item.remove|default(false)
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Remove former users
+      user:
+        name: "{{ item.name }}"
+        force: true
+        state: absent
+      loop: "{{ employees.employees }}"
+      when: item.remove|default(false)
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Fill authorized keys for {{ ansible_user }}
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ item.ssh_key }}"
+        comment: "{{ item.name }}"
+      loop: "{{ employees.employees }}"
+      when: not (item.remove|default(false))
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Fill authorized keys for users
+      authorized_key:
+        user: "{{ item.name }}"
+        state: present
+        key: "{{ item.ssh_key }}"
+        comment: "{{ item.name }}"
+      loop: "{{ employees.employees }}"
+      when: not (item.remove|default(false))
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Allow specified groups to sudo
+      lineinfile:
+        path: /etc/sudoers
+        regexp: '%sudo'
+        line: '%sudo   ALL=(ALL:ALL) ALL'
+        validate: 'visudo -cf %s'
+        owner: root
+        group: root
+        mode: '0440'
+
+    - name: Disable ssh root access
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: PermitRootLogin
+        line: 'PermitRootLogin no'
+        validate: '/usr/sbin/sshd -t -f %s'
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install certbot
+      community.general.snap:
+        name: certbot
+        classic: true
+
+    - name: "weekly certificate renewal"
+      cron:
+        user: root
+        name: "weekly certificate renewal"
+        job: "/snap/bin/certbot renew"
+        special_time: weekly
+
+    - name: Install core packages
+      apt:
+        name:
+          # Infra
+          # - sudo
+          - iptables
+          - iptables-persistent
+          - fail2ban
+          - mdadm
+          - smartmontools
+          - unattended-upgrades
+          - apt-listchanges
+          - logrotate
+          - snapd
+          - systemd-timesyncd
+
+          # Monitoring/debug/diag
+          - dnsutils
+          - htop
+          - telnet
+          - netcat
+
+          # User utilities
+          - vim
+          - tmux
+          - rsync
+          - bash-completion
+          - tree
+          - atool
+      when: inventory_hostname not in groups['vps03']
+
+    - name: Copy sshd default config
+      template:
+        src: sshd_config.j2
+        dest: /etc/ssh/sshd_config
+        owner: root
+        group: root
+        mode: 0644
+        validate: /usr/sbin/sshd -t -f %s
+      notify: restart sshd
+      when: inventory_hostname not in groups['vps03']
+
+    - name: Remove ntp package
+      apt:
+        name: ntp
+        state: absent
+      notify: restart systemd-timesyncd
+
+    - name: Copy timesyncd conf
+      template:
+        src: timesyncd.conf.j2
+        dest: /etc/systemd/timesyncd.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart systemd-timesyncd
+
+    - name: Set timezone to Europe/Paris
+      timezone:
+        name: Europe/Paris
+
+    # - name: Create iptables config files
+    #   file:
+    #     path: "/etc/iptables/{{ item }}"
+    #     state: directory
+    #     owner: root
+    #     group: root
+    #     mode: '0755'
+    #   loop:
+    #     - rules.v4.d
+    #     - rules.v6.d
+
+    # - name: Copy common iptables rules
+    #   template:
+    # #   Example: rules.d/01_header.j2
+    #     src: "rules.d/{{ item[1] }}.j2"
+    # #   Example: /etc/iptables/rules.v4.d/01_header
+    #     dest: "/etc/iptables/{{ item[0] }}/{{ item[1] }}"
+    #     owner: root
+    #     group: root
+    #     mode: '0644'
+    #   loop:
+    #   with_nested:
+    #     - - rules.v4.d
+    #       - rules.v6.d
+    #     - - 01_header
+    #       - 02_policies
+    #       - 03_established
+    #       - 04_loopback
+    #       - 11_ssh
+    #       - 12_dns
+    #       - 13_ntp
+    #       - 14_debrepo_pip
+    #       - 98_debug
+    #       - 99_footer
+
+    # - name: Copy v4/v6common iptables rules
+    #   template:
+    # #   Example: rules.v4.d/10_ping.j2
+    #     src: "{{ item[0] }}/{{ item[1] }}.j2"
+    # #   Example: /etc/iptables/rules.v4.d/10_ping
+    #     dest: "/etc/iptables/{{ item[0] }}/{{ item[1] }}"
+    #     owner: root
+    #     group: root
+    #     mode: '0644'
+    #   loop:
+    #   with_nested:
+    #     - - rules.v4.d
+    #       - rules.v6.d
+    #     - - 10_ping
+
+    # - name: Assemble iptables fragments
+    #   assemble:
+    # #   Example: /etc/iptables/rules.v4.d
+    #     src: "/etc/iptables/rules.{{ item.version }}.d"
+    # #   Example: /etc/iptables/rules.v4
+    #     dest: "/etc/iptables/rules.{{ item.version }}"
+    #     validate: "/usr/sbin/{{ item.command }} --test %s"
+    #   loop:
+    #     - version: v4
+    #       command: iptables-restore
+    #     - version: v6
+    #       command: ip6tables-restore
+
+    # - name: "Periodic RAID verification"
+    #   cron:
+    #     name: "RAID periodic verification"
+    #     job: /usr/share/mdadm/checkarray --all
+    #     special_time: weekly
+
+    - name: Set mdadm mail address
+      lineinfile:
+        dest: /etc/mdadm/mdadm.conf
+        regexp: "^MAILADDR"
+        line: "MAILADDR {{ support_mail_addr }}"
+
+    - name: Configure unattended-upgrade
+      template:
+        src: "{{ item }}.j2"
+        dest: "/etc/apt/apt.conf.d/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - 20auto-upgrades
+        - 50unattended-upgrades
+
+    - name: Configure logrotate - nginx
+      template:
+        src: logrotate-nginx.j2
+        dest: /etc/logrotate.d/nginx
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart when required for upgrades on monday
+      ansible.builtin.cron:
+        name: restart when required for upgrades
+        weekday: "1"  # monday
+        minute: "0"
+        hour: "6"
+        user: root
+        job: "[ -f /var/run/reboot-required ] && reboot"
+
+- name: Deploy Mailgun SMTP configuration
+  hosts: all
+  vars:
+    - mailgun_username: postmaster@mail.telescoop.fr
+    - mailgun_password: "{{ mailgun_smtp_password }}"
+    - root_forward: "{{ support_mail_addr }}"
+    - mailgun_smtp: smtp.eu.mailgun.org
+  roles:
+    - ansible-mailgun

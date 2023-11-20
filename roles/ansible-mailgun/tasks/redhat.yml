@@ -1,0 +1,6 @@
+---
+
+- name: Install packages (Red Hat)
+  yum:
+    name: "{{ postfix_packages }}"
+    state: present
