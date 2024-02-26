@@ -125,7 +125,7 @@
           - systemd-timesyncd
 
           # Monitoring/debug/diag
-          - dnsutils
+#          - dnsutils
           - htop
           - telnet
           - netcat

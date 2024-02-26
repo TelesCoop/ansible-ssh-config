@@ -1,6 +1,6 @@
 # Configure and update TelesCoop servers
-
-Run `ansible-playbook server-config.yml` to configure ssh access
+This configuration file works for Ubuntu 22.
+Run `sudo ls` then run `ansible-playbook server-config.yml` to configure ssh access
 and global installation on TelesCoop servers.
 
 Then run `ansible-playbook mail.yml` to configure server mail

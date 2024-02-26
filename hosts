@@ -9,3 +9,6 @@ vps02.tlscp.fr:42722 ansible_user=ubuntu
 
 [vps03]
 vps03.tlscp.fr ansible_user=telescoop
+
+[vps04]
+vps04.tlscp.fr:42722 ansible_user=ubuntu
