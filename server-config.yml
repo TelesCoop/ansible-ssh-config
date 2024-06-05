@@ -3,9 +3,14 @@
 - hosts: all
   remote_user: root
   handlers:
-    - name: restart sshd
+    - name: restart ssh daemon
       service:
-        name: sshd
+        name: "{{
+          'ssh'
+          if host_distribution.stdout == 'Debian'
+            or host_distribution_version.stdout == '24.04'
+          else 'sshd'
+        }}"
         state: restarted
     - name: restart systemd-timesyncd
       systemd:
@@ -13,6 +18,16 @@
         state: restarted
         enabled: true
   tasks:
+    # we need distribution and distribution number as (at least)
+    # the sshd service name depends on it
+    - name: get host distribution
+      command: lsb_release -is
+      register: host_distribution
+
+    - name: get distribution version
+      command: lsb_release -rs
+      register: host_distribution_version
+
     - name: Create misc groups
       group:
         name: "{{ item }}"
@@ -27,6 +42,7 @@
         dest: ./employees.yaml
         force: true  # file might have been updated
       delegate_to: localhost
+      become: no
 
     - name: Define employees variable from file
       include_vars:
@@ -123,12 +139,12 @@
           - logrotate
           - snapd
           - systemd-timesyncd
+          - nginx
 
           # Monitoring/debug/diag
 #          - dnsutils
           - htop
           - telnet
-          - netcat
 
           # User utilities
           - vim
@@ -147,7 +163,8 @@
         group: root
         mode: 0644
         validate: /usr/sbin/sshd -t -f %s
-      notify: restart sshd
+      notify: restart ssh daemon
+      # vps03 has yunohost, we don't want to change its ssh config
       when: inventory_hostname not in groups['vps03']
 
     - name: Remove ntp package

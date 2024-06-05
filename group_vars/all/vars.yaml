@@ -1,4 +1,3 @@
-os: ubuntu
 sshd:
   port: 42722
 
