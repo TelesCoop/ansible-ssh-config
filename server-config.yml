@@ -92,6 +92,24 @@
       loop_control:
         label: "{{ item.name }}"
 
+    - name: Generate CI /etc/ssh/ RSA host key
+      command: "ssh-keygen -q -t ed25519 -a 100 -f {{ github_ssh_key }} -C \"\" -N \"\""
+      become_user: "{{ ansible_user }}"
+      args:
+        creates: "{{ github_ssh_key }}"
+      register: github_new_ssh_key
+
+    - name: Get new ssh private key contents
+      command: "cat {{ github_ssh_key }}.pub"
+      register: github_command_output
+
+    - name: Fill authorized keys for Github on {{ ansible_user }}
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ github_command_output.stdout }}"
+        comment: "Github"
+
     - name: Allow specified groups to sudo
       lineinfile:
         path: /etc/sudoers

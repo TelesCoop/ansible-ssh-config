@@ -12,3 +12,5 @@ mailgun_smtp_password: !vault |
           66653738633864633635613463633136306361396132373663643038636439333833666235656230
           393037356535643530363965393461633866
 support_mail_addr: sysadmin@telescoop.fr
+
+github_ssh_key: /home/{{ ansible_user }}/.ssh/id_ed25519_github
