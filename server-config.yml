@@ -185,6 +185,19 @@
       # vps03 has yunohost, we don't want to change its ssh config
       when: inventory_hostname not in groups['vps03']
 
+    - name: Remove default nginx config
+      file:
+        state: absent
+        dest: /etc/nginx/sites-enabled/default
+
+    - name: add nginx default nginx config
+      template:
+        src: default-nginx.conf
+        dest: /etc/nginx/sites-available/default
+        owner: root
+        group: root
+        mode: 0644
+
     - name: Remove ntp package
       apt:
         name: ntp
