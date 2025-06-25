@@ -320,6 +320,10 @@
         user: root
         job: "[ -f /var/run/reboot-required ] && reboot"
 
+    - name: set server hostname
+      hostname:
+        name: "{{ group_names[0] }}"
+
 - name: Deploy Mailgun SMTP configuration
   hosts: all
   vars:
