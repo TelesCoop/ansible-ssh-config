@@ -1,6 +1,6 @@
 # Configuration Ansible pour serveurs TelesCoop
 
-Ce dépôt contient des playbooks Ansible pour configurer et maintenir l'infrastructure des serveurs TelesCoop. 
+Ce dépôt contient des playbooks Ansible pour configurer et maintenir l'infrastructure des serveurs TelesCoop.
 Plus globalement, il automatise la configuration sécurisée des serveurs Ubuntu 22+ avec gestion des utilisateurs, SSH, sécurité et services essentiels.
 
 

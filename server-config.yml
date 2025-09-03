@@ -81,6 +81,15 @@
       loop_control:
         label: "{{ item.name }}"
 
+    # for Marc Siramy on Biohponia
+    - name: Add additional SSH key for Marc Siramy for {{ ansible_user }} on vps06
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDnUJhfUp8wx7NLdxSCLyKgne1ryO7F+ayvYHbJYL/5C"
+        comment: "Additional key for Marc (Biophonia) vps06"
+      when: inventory_hostname in groups['vps06']
+
     - name: Fill authorized keys for users
       authorized_key:
         user: "{{ item.name }}"
