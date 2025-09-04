@@ -20,4 +20,4 @@ vps05.tlscp.fr:42722 ansible_user=ubuntu
 s00.tlscp.fr:42722 ansible_user=ubuntu
 
 [vps06]
-vps06.tlscp.fr:22 ansible_user=ubuntu
+vps06.tlscp.fr:42722 ansible_user=ubuntu
