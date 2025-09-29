@@ -77,7 +77,7 @@
         key: "{{ item.ssh_key }}"
         comment: "{{ item.name }}"
       loop: "{{ employees.employees }}"
-      when: item.has_ssh_access|default(true)
+      when: item.has_ssh_access|default(true) and item.ssh_key is defined
       loop_control:
         label: "{{ item.name }}"
 
@@ -97,7 +97,7 @@
         key: "{{ item.ssh_key }}"
         comment: "{{ item.name }}"
       loop: "{{ employees.employees }}"
-      when: item.has_ssh_access|default(true)
+      when: item.has_ssh_access|default(true) and item.ssh_key is defined
       loop_control:
         label: "{{ item.name }}"
 
