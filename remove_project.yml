@@ -18,6 +18,8 @@
     remove_database: false
     remove_system_user: false
     database_name: "{{ project_slug }}"
+    # Static sites often name the vhost after the domain, not the directory.
+    nginx_vhost_name: "{{ project_slug }}"
     backup_directory: "/var/backups/project-removal/{{ project_slug }}"
     # A role suffix carries no separator of its own, which is what tells
     # "<slug>-backend" apart from the neighbouring "<slug>-preprod-backend".
@@ -88,7 +90,7 @@
 
     - name: Check whether the nginx vhost exists
       stat:
-        path: "/etc/nginx/sites-enabled/{{ project_slug }}"
+        path: "/etc/nginx/sites-enabled/{{ nginx_vhost_name }}"
       register: nginx_vhost
 
     - name: Report what will be removed
@@ -100,6 +102,13 @@
           - "vhost nginx : {{ 'oui' if nginx_vhost.stat.exists else 'non' }}"
           - "NON TOUCHÉ (autres projets ou rôles composés) : {{ neighbour_configs.files | map(attribute='path') | map('basename') | reject('in', supervisor_configs.files | map(attribute='path') | map('basename') | list) | list }}"
           - "base de données : {{ 'supprimée' if remove_database | bool else 'conservée' }}"
+          - >-
+            {{ 'ATTENTION : un vhost existe mais aucun fichier ni programme ne porte ce nom.
+            Vérifier le slug (-e project_slug=) et le vhost (-e nginx_vhost_name=).'
+            if nginx_vhost.stat.exists
+               and supervisor_configs.files | length == 0
+               and (project_directories.results | selectattr('stat.exists') | list | length) == 0
+            else '' }}
           - "compte système : {{ 'supprimé' if remove_system_user | bool else 'conservé' }}"
 
     - name: Create the backup directory
@@ -126,7 +135,7 @@
     # The enabled entry is often a symlink; follow it rather than guess its target.
     - name: Back up the nginx vhost
       copy:
-        src: "{{ nginx_vhost.stat.lnk_source | default('/etc/nginx/sites-enabled/' + project_slug) }}"
+        src: "{{ nginx_vhost.stat.lnk_source | default('/etc/nginx/sites-enabled/' + nginx_vhost_name) }}"
         dest: "{{ backup_directory }}/"
         remote_src: true
         mode: '0600'
@@ -184,7 +193,7 @@
 
     - name: Disable the nginx vhost
       file:
-        path: "/etc/nginx/sites-enabled/{{ project_slug }}"
+        path: "/etc/nginx/sites-enabled/{{ nginx_vhost_name }}"
         state: absent
       when: nginx_vhost.stat.exists
       notify: Reload nginx
