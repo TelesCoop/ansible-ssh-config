@@ -63,6 +63,7 @@
         patterns: "{{ config_pattern }}"
         use_regex: true
       register: supervisor_configs
+      check_mode: false
 
     # Anything sharing the prefix but not matching belongs to another project or
     # carries a composite role name; it is reported, never touched.
@@ -71,12 +72,14 @@
         paths: /etc/supervisor/conf.d
         patterns: "{{ project_slug }}*"
       register: neighbour_configs
+      check_mode: false
 
     - name: Read the programs declared by those configurations
       shell:
         cmd: "grep -ho '^\\[program:[^]]*\\]' {{ supervisor_configs.files | map(attribute='path') | map('quote') | join(' ') }} | sed 's/\\[program:\\(.*\\)\\]/\\1/'"
       register: declared_programs
       changed_when: false
+      check_mode: false
       when: supervisor_configs.files | length > 0
 
     - name: Find the project directories
@@ -87,11 +90,39 @@
         - "/usr/local/telescoop/{{ project_slug }}"
         - "/var/log/telescoop/{{ project_slug }}"
       register: project_directories
+      check_mode: false
 
     - name: Check whether the nginx vhost exists
       stat:
         path: "/etc/nginx/sites-enabled/{{ nginx_vhost_name }}"
       register: nginx_vhost
+      check_mode: false
+
+    - name: Read the domains served by the vhost
+      shell:
+        cmd: "grep -hoP '^\\s*server_name\\s+\\K[^;]+' /etc/nginx/sites-enabled/{{ nginx_vhost_name }} | tr ' ' '\\n' | grep -v '^$' | sort -u"
+      register: vhost_domains
+      changed_when: false
+      check_mode: false
+      when: nginx_vhost.stat.exists
+
+    - name: Find the nginx logs of those domains
+      find:
+        paths: /var/log/nginx
+        patterns: "*{{ item | replace('.', '_') }}.log*"
+      loop: "{{ vhost_domains.stdout_lines | default([]) }}"
+      register: nginx_logs
+      check_mode: false
+
+    # A certificate shared with another site must not be deleted, so its own
+    # domain list decides.
+    - name: Read the domains each certificate covers
+      shell:
+        cmd: "certbot certificates --cert-name {{ item | quote }} 2>/dev/null | grep -oP 'Domains:\\s*\\K.*' || true"
+      loop: "{{ vhost_domains.stdout_lines | default([]) }}"
+      register: certificate_domains
+      changed_when: false
+      check_mode: false
 
     - name: Report what will be removed
       debug:
@@ -100,6 +131,9 @@
           - "configurations : {{ supervisor_configs.files | map(attribute='path') | map('basename') | list }}"
           - "répertoires : {{ project_directories.results | selectattr('stat.exists') | map(attribute='item') | list }}"
           - "vhost nginx : {{ 'oui' if nginx_vhost.stat.exists else 'non' }}"
+          - "domaines : {{ vhost_domains.stdout_lines | default([]) }}"
+          - "journaux nginx : {{ nginx_logs.results | default([]) | map(attribute='files') | flatten | length }} fichier(s), non sauvegardés"
+          - "certificats supprimés : {{ certificate_domains.results | default([]) | selectattr('stdout', 'truthy') | selectattr('stdout', 'search', '.') | map(attribute='item') | list }}"
           - "NON TOUCHÉ (autres projets ou rôles composés) : {{ neighbour_configs.files | map(attribute='path') | map('basename') | reject('in', supervisor_configs.files | map(attribute='path') | map('basename') | list) | list }}"
           - "base de données : {{ 'supprimée' if remove_database | bool else 'conservée' }}"
           - >-
@@ -150,6 +184,7 @@
       become_user: postgres
       register: database_present
       changed_when: false
+      check_mode: false
 
     # Dumped even when the database is kept: it is the only safety net if someone
     # later reruns this playbook with remove_database=true. Written to /tmp first
@@ -211,6 +246,45 @@
     # -------------------------------
     # Remove the files
     # -------------------------------
+    - name: Remove the nginx vhost definition
+      file:
+        path: "/etc/nginx/sites-available/{{ nginx_vhost_name }}"
+        state: absent
+
+    # Not backed up: they run to hundreds of megabytes and serve no purpose once
+    # the project is gone.
+    - name: Remove the nginx logs
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ nginx_logs.results | default([]) | map(attribute='files') | flatten }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    # Left in place, its weekly renewal would fail for a domain that no longer
+    # resolves. Only removed when every domain it covers belongs to this project.
+    - name: Remove the certificates covering only this project
+      command:
+        cmd: "certbot delete --cert-name {{ item.item | quote }} --non-interactive"
+      loop: "{{ certificate_domains.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - item.stdout | default('') | length > 0
+        - item.stdout.split() | difference(vhost_domains.stdout_lines | default([])) | length == 0
+
+    - name: Report the certificates left alone
+      debug:
+        msg: >-
+          Certificat {{ item.item }} conservé : il couvre aussi
+          {{ item.stdout.split() | difference(vhost_domains.stdout_lines | default([])) | join(', ') }}
+      loop: "{{ certificate_domains.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - item.stdout | default('') | length > 0
+        - item.stdout.split() | difference(vhost_domains.stdout_lines | default([])) | length > 0
+
     - name: Remove the project directories
       file:
         path: "{{ item.item }}"
@@ -283,7 +357,7 @@
                else ('Base conservée, dump réalisé.'
                      if database_present.rowcount | default(0) > 0
                      else 'Aucune base de ce nom.') }}
-          - "Penser à retirer l'entrée DNS et le certificat Let's Encrypt."
+          - "Penser à retirer l'entrée DNS."
 
   handlers:
     - name: Reload nginx
