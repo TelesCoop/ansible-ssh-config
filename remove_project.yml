@@ -19,6 +19,9 @@
     remove_system_user: false
     database_name: "{{ project_slug }}"
     backup_directory: "/var/backups/project-removal/{{ project_slug }}"
+    # A role suffix carries no separator of its own, which is what tells
+    # "<slug>-backend" apart from the neighbouring "<slug>-preprod-backend".
+    config_pattern: "^{{ project_slug | regex_escape }}([-_][a-z0-9]+)?\\.conf$"
 
   tasks:
     # -------------------------------
@@ -28,9 +31,11 @@
       assert:
         that:
           - project_slug is defined
-          - project_slug | length > 0
+          - project_slug is string
+          - project_slug is match('^[a-z0-9][a-z0-9_-]*$')
         fail_msg: >-
           Nommer le projet : -e project_slug=<nom>
+          (minuscules, chiffres, tirets et soulignés uniquement)
 
     # A typo here deletes the wrong project, so the name must be given twice.
     - name: Require the confirmation to match the project
@@ -39,15 +44,38 @@
         fail_msg: >-
           Confirmer la suppression : -e confirm_project={{ project_slug }}
 
+    # Without --limit this play would run the whole sequence on every host.
+    - name: Require a single target host
+      assert:
+        that: ansible_play_hosts | length == 1
+        fail_msg: >-
+          Cibler un seul serveur avec --limit (actuellement :
+          {{ ansible_play_hosts | join(', ') }})
+
     # -------------------------------
     # What is actually there
     # -------------------------------
-    - name: Find the supervisor configurations
+    - name: Find the supervisor configurations of this project
       find:
         paths: /etc/supervisor/conf.d
-        patterns: "{{ project_slug }}[-_]*.conf"
-        use_regex: false
+        patterns: "{{ config_pattern }}"
+        use_regex: true
       register: supervisor_configs
+
+    # Anything sharing the prefix but not matching belongs to another project or
+    # carries a composite role name; it is reported, never touched.
+    - name: Find the neighbouring configurations left untouched
+      find:
+        paths: /etc/supervisor/conf.d
+        patterns: "{{ project_slug }}*"
+      register: neighbour_configs
+
+    - name: Read the programs declared by those configurations
+      shell:
+        cmd: "grep -ho '^\\[program:[^]]*\\]' {{ supervisor_configs.files | map(attribute='path') | map('quote') | join(' ') }} | sed 's/\\[program:\\(.*\\)\\]/\\1/'"
+      register: declared_programs
+      changed_when: false
+      when: supervisor_configs.files | length > 0
 
     - name: Find the project directories
       stat:
@@ -66,11 +94,13 @@
     - name: Report what will be removed
       debug:
         msg:
-          - "configurations supervisor : {{ supervisor_configs.files | map(attribute='path') | map('basename') | list }}"
+          - "programmes : {{ declared_programs.stdout_lines | default([]) }}"
+          - "configurations : {{ supervisor_configs.files | map(attribute='path') | map('basename') | list }}"
           - "répertoires : {{ project_directories.results | selectattr('stat.exists') | map(attribute='item') | list }}"
           - "vhost nginx : {{ 'oui' if nginx_vhost.stat.exists else 'non' }}"
-          - "base de données : {{ 'supprimée' if remove_database | bool else 'conservée (remove_database=true pour la supprimer)' }}"
-          - "compte système : {{ 'supprimé' if remove_system_user | bool else 'conservé (remove_system_user=true pour le supprimer)' }}"
+          - "NON TOUCHÉ (autres projets ou rôles composés) : {{ neighbour_configs.files | map(attribute='path') | map('basename') | reject('in', supervisor_configs.files | map(attribute='path') | map('basename') | list) | list }}"
+          - "base de données : {{ 'supprimée' if remove_database | bool else 'conservée' }}"
+          - "compte système : {{ 'supprimé' if remove_system_user | bool else 'conservé' }}"
 
     - name: Create the backup directory
       file:
@@ -93,14 +123,14 @@
       loop_control:
         label: "{{ item.path | basename }}"
 
+    # The enabled entry is often a symlink; follow it rather than guess its target.
     - name: Back up the nginx vhost
       copy:
-        src: "/etc/nginx/sites-available/{{ project_slug }}"
+        src: "{{ nginx_vhost.stat.lnk_source | default('/etc/nginx/sites-enabled/' + project_slug) }}"
         dest: "{{ backup_directory }}/"
         remote_src: true
         mode: '0600'
       when: nginx_vhost.stat.exists
-      ignore_errors: true
 
     - name: Check whether the database exists
       community.postgresql.postgresql_query:
@@ -112,22 +142,37 @@
       register: database_present
       changed_when: false
 
-    # Dumped even when the database is kept: it is the only step that cannot be
-    # undone once someone runs this playbook again with remove_database=true.
+    # Dumped even when the database is kept: it is the only safety net if someone
+    # later reruns this playbook with remove_database=true. Written to /tmp first
+    # because the redirect runs as postgres, which cannot write the backup dir.
     - name: Dump the database
       shell:
-        cmd: "pg_dump -Fc {{ database_name | quote }} > {{ backup_directory }}/{{ database_name }}.dump"
+        cmd: "pg_dump -Fc {{ database_name | quote }} > /tmp/{{ database_name }}.dump"
       become_user: postgres
       when: database_present.rowcount | default(0) > 0
       changed_when: true
 
+    - name: Move the dump into the backups
+      command:
+        cmd: "mv /tmp/{{ database_name }}.dump {{ backup_directory }}/"
+        removes: "/tmp/{{ database_name }}.dump"
+      when: database_present.rowcount | default(0) > 0
+
     # -------------------------------
     # Stop and remove the services
     # -------------------------------
-    - name: Stop the supervisor programs
-      shell:
-        cmd: "supervisorctl stop {{ project_slug }}:* 2>/dev/null || true"
-      changed_when: false
+    # Removing each program by name leaves any other pending config change on the
+    # host alone, which "supervisorctl update" would have applied.
+    - name: Stop and remove the supervisor programs
+      command:
+        cmd: "supervisorctl {{ item[0] }} {{ item[1] }}"
+      loop: "{{ ['stop', 'remove'] | product(declared_programs.stdout_lines | default([])) | list }}"
+      loop_control:
+        label: "{{ item[0] }} {{ item[1] }}"
+      register: supervisor_removal
+      failed_when:
+        - supervisor_removal.rc != 0
+        - "'no such process' not in supervisor_removal.stdout | lower"
 
     - name: Remove the supervisor configurations
       file:
@@ -136,7 +181,6 @@
       loop: "{{ supervisor_configs.files }}"
       loop_control:
         label: "{{ item.path | basename }}"
-      notify: Reload supervisor
 
     - name: Disable the nginx vhost
       file:
@@ -149,6 +193,11 @@
       shell:
         cmd: "crontab -r -u {{ project_slug | quote }} 2>/dev/null || true"
       changed_when: false
+
+    # nginx must let go of the vhost before the files disappear, and well before
+    # a database drop that may fail and stop the play.
+    - name: Apply the service changes now
+      meta: flush_handlers
 
     # -------------------------------
     # Remove the files
@@ -169,6 +218,7 @@
       community.postgresql.postgresql_db:
         name: "{{ database_name }}"
         state: absent
+        force: true
       become_user: postgres
       when:
         - remove_database | bool
@@ -177,10 +227,11 @@
     # A role can hold privileges on server parameters, which blocks the drop
     # until they are revoked.
     - name: Revoke the role's parameter privileges
-      shell:
-        cmd: "psql -c 'REVOKE ALL ON PARAMETER session_replication_role FROM {{ database_name }}' 2>/dev/null || true"
+      command:
+        cmd: "psql -c 'REVOKE ALL ON PARAMETER session_replication_role FROM {{ database_name }}'"
       become_user: postgres
       when: remove_database | bool
+      failed_when: false
       changed_when: false
 
     - name: Drop the database role
@@ -189,29 +240,43 @@
         state: absent
       become_user: postgres
       when: remove_database | bool
-      ignore_errors: true
+      register: role_removal
+      failed_when:
+        - role_removal.failed | default(false)
+        - "'does not exist' not in role_removal.msg | default('')"
 
+    - name: Check the system account before removing it
+      getent:
+        database: passwd
+        key: "{{ project_slug }}"
+      register: system_account
+      failed_when: false
+      when: remove_system_user | bool
+
+    # Refuses to run when the home is shared, which would wipe every project.
     - name: Remove the system account and its home
       user:
         name: "{{ project_slug }}"
         state: absent
-        remove: true
-      when: remove_system_user | bool
-      ignore_errors: true
+        remove: "{{ (system_account.ansible_facts.getent_passwd[project_slug][4] | default('')) is match('^/home/' + project_slug) }}"
+      when:
+        - remove_system_user | bool
+        - system_account.ansible_facts.getent_passwd[project_slug] is defined
 
     - name: Report what remains
       debug:
         msg:
           - "Projet {{ project_slug }} retiré de {{ inventory_hostname }}."
           - "Sauvegardes : {{ backup_directory }}"
-          - "{{ 'Base et rôle supprimés.' if remove_database | bool else 'Base conservée : le dump est dans les sauvegardes.' }}"
-          - "Penser à retirer l'entrée DNS."
+          - >-
+            {{ 'Base et rôle supprimés (dump conservé).'
+               if remove_database | bool
+               else ('Base conservée, dump réalisé.'
+                     if database_present.rowcount | default(0) > 0
+                     else 'Aucune base de ce nom.') }}
+          - "Penser à retirer l'entrée DNS et le certificat Let's Encrypt."
 
   handlers:
-    - name: Reload supervisor
-      shell:
-        cmd: "supervisorctl reread && supervisorctl update"
-
     - name: Reload nginx
       shell:
         cmd: "nginx -t && systemctl reload nginx"
