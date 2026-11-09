@@ -17,6 +17,10 @@
         name: systemd-timesyncd
         state: restarted
         enabled: true
+    - name: restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
   tasks:
     # we need distribution and distribution number as (at least)
     # the sshd service name depends on it
@@ -183,6 +187,18 @@
         validate: /usr/sbin/sshd -t -f %s
       notify: restart ssh daemon
       # vps03 has yunohost, we don't want to change its ssh config
+      when: inventory_hostname not in groups['vps03']
+
+    - name: Ban on the ssh port actually listened to
+      copy:
+        content: |
+          [sshd]
+          port = {{ sshd.port }}
+        dest: /etc/fail2ban/jail.d/sshd-port.local
+        owner: root
+        group: root
+        mode: 0644
+      notify: restart fail2ban
       when: inventory_hostname not in groups['vps03']
 
     - name: Remove default nginx config
