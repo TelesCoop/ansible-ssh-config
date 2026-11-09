@@ -1,5 +1,8 @@
 ---
 
+- name: hash sasl password map
+  command: postmap hash:/etc/postfix/sasl_passwd
+
 - name: restart postfix
   service:
     name: postfix

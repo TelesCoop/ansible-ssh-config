@@ -22,6 +22,18 @@
 - import_tasks: debian.yml
   when: ansible_os_family == 'Debian'
 
+- name: Store Mailgun credentials outside the world-readable main.cf
+  copy:
+    content: "[smtp.mailgun.org]:587 {{ mailgun_username }}:{{ mailgun_password }}\n"
+    dest: /etc/postfix/sasl_passwd
+    owner: root
+    group: root
+    mode: 0600
+  no_log: true
+  notify:
+    - hash sasl password map
+    - restart postfix
+
 - name: Include Mailgun configuration in main.conf
   lineinfile:
     dest: /etc/postfix/main.cf
@@ -32,7 +44,7 @@
     - { regexp: "^smtp_tls_security_level", line: "smtp_tls_security_level = encrypt" }
     - { regexp: "^smtp_tls_note_starttls_offer", line: "smtp_tls_note_starttls_offer = yes" }
     - { regexp: "^smtp_sasl_auth_enable", line: "smtp_sasl_auth_enable = yes" }
-    - { regexp: "^smtp_sasl_password_maps", line: "smtp_sasl_password_maps = static:{{ mailgun_username }}:{{ mailgun_password }}" }
+    - { regexp: "^smtp_sasl_password_maps", line: "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd" }
     - { regexp: "^smtp_sasl_security_options", line: "smtp_sasl_security_options = noanonymous" }
   notify:
     - restart postfix
