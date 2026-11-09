@@ -8,7 +8,7 @@
         name: "{{
           'ssh'
           if host_distribution.stdout == 'Debian'
-            or host_distribution_version.stdout == '24.04'
+            or host_distribution_version.stdout is version('24.04', '>=')
           else 'sshd'
         }}"
         state: restarted
